@@ -59,6 +59,8 @@ pub struct AzdlsConfig {
     pub account_name: Option<String>,
     /// Account key of this backend.
     pub account_key: Option<String>,
+    /// SAS token of this backend.
+    pub sas_token: Option<String>,
 }
 
 impl Debug for AzdlsConfig {
@@ -74,6 +76,9 @@ impl Debug for AzdlsConfig {
         }
         if self.account_key.is_some() {
             ds.field("account_key", &"<redacted>");
+        }
+        if self.sas_token.is_some() {
+            ds.field("sas_token", &"<redacted>");
         }
 
         ds.finish()
@@ -165,6 +170,15 @@ impl AzdlsBuilder {
         self
     }
 
+    /// Set sas_token of this backend.
+    pub fn sas_token(mut self, sas_token: &str) -> Self {
+        if !sas_token.is_empty() {
+            self.config.sas_token = Some(sas_token.to_string());
+        }
+
+        self
+    }
+
     /// Specify the http client that used by this service.
     ///
     /// # Notes
@@ -220,7 +234,7 @@ impl Builder for AzdlsBuilder {
                 .clone()
                 .or_else(|| infer_storage_name_from_endpoint(endpoint.as_str())),
             account_key: self.config.account_key.clone(),
-            sas_token: None,
+            sas_token: self.config.sas_token.clone(),
             ..Default::default()
         };
 
@@ -235,6 +249,7 @@ impl Builder for AzdlsBuilder {
                 loader: cred_loader,
                 signer,
             }),
+            has_sas_token: self.config.sas_token.is_some(),
         })
     }
 }
@@ -243,6 +258,7 @@ impl Builder for AzdlsBuilder {
 #[derive(Debug, Clone)]
 pub struct AzdlsBackend {
     core: Arc<AzdlsCore>,
+    has_sas_token: bool,
 }
 
 impl Access for AzdlsBackend {
@@ -270,6 +286,12 @@ impl Access for AzdlsBackend {
                 rename: true,
 
                 list: true,
+                list_with_start_after: true,
+
+                presign: self.has_sas_token,
+                presign_stat: self.has_sas_token,
+                presign_read: self.has_sas_token,
+                presign_write: self.has_sas_token,
 
                 ..Default::default()
             });
@@ -379,7 +401,7 @@ impl Access for AzdlsBackend {
     }
 
     async fn list(&self, path: &str, args: OpList) -> Result<(RpList, Self::Lister)> {
-        let l = AzdlsLister::new(self.core.clone(), path.to_string(), args.limit());
+        let l = AzdlsLister::new(self.core.clone(), path.to_string(), args);
 
         Ok((RpList::default(), oio::PageLister::new(l)))
     }

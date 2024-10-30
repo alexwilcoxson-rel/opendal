@@ -57,6 +57,7 @@ use crate::*;
 pub struct FlatLister<A: Access, L> {
     acc: A,
     root: String,
+    start_after: Option<String>,
 
     next_dir: Option<oio::Entry>,
     active_lister: Vec<(Option<oio::Entry>, L)>,
@@ -76,12 +77,21 @@ where
     A: Access,
 {
     /// Create a new flat lister
-    pub fn new(acc: A, path: &str) -> FlatLister<A, L> {
+    pub fn new(acc: A, path: &str, start_after: Option<&str>) -> FlatLister<A, L> {
         FlatLister {
             acc,
             root: path.to_string(),
+            start_after: start_after.map(|s| s.to_string()),
             next_dir: Some(oio::Entry::new(path, Metadata::new(EntryMode::DIR))),
             active_lister: vec![],
+        }
+    }
+
+    fn list_args(&self) -> OpList {
+        if let Some(start_after) = &self.start_after {
+            OpList::new().with_start_after(start_after)
+        } else {
+            OpList::new()
         }
     }
 }
@@ -94,7 +104,7 @@ where
     async fn next(&mut self) -> Result<Option<oio::Entry>> {
         loop {
             if let Some(de) = self.next_dir.take() {
-                let (_, l) = self.acc.list(de.path(), OpList::new()).await?;
+                let (_, l) = self.acc.list(de.path(), self.list_args()).await?;
                 self.active_lister.push((Some(de), l));
             }
 
@@ -137,7 +147,7 @@ where
     fn next(&mut self) -> Result<Option<oio::Entry>> {
         loop {
             if let Some(de) = self.next_dir.take() {
-                let (_, l) = self.acc.blocking_list(de.path(), OpList::new())?;
+                let (_, l) = self.acc.blocking_list(de.path(), self.list_args())?;
 
                 self.active_lister.push((Some(de), l))
             }
@@ -251,7 +261,7 @@ mod tests {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
 
         let acc = MockService::new();
-        let mut lister = FlatLister::new(acc, "x/");
+        let mut lister = FlatLister::new(acc, "x/", None);
 
         let mut entries = Vec::default();
 
