@@ -95,25 +95,28 @@ use std::sync::Arc;
 pub struct OpendalStore {
     info: Arc<OperatorInfo>,
     inner: Operator,
+    list_metakey: flagset::FlagSet<Metakey>,
 }
 
 impl OpendalStore {
     /// Create OpendalStore by given Operator.
     pub fn new(op: Operator) -> Self {
-        Self {
-            info: op.info().into(),
-            inner: op,
-        }
-    }
-
-    /// The metakey that requested by object_store, should align with its meta.
-    #[inline]
-    fn metakey() -> flagset::FlagSet<Metakey> {
-        Metakey::Mode
+        let list_metakey = Metakey::Mode
             | Metakey::LastModified
             | Metakey::ContentLength
             | Metakey::Etag
-            | Metakey::Version
+            | Metakey::Version;
+
+        Self {
+            info: op.info().into(),
+            inner: op,
+            list_metakey,
+        }
+    }
+
+    pub fn with_list_metakey(mut self, metakey: flagset::FlagSet<Metakey>) -> Self {
+        self.list_metakey = metakey;
+        self
     }
 }
 
@@ -306,7 +309,7 @@ impl ObjectStore for OpendalStore {
             let stream = self
                 .inner
                 .lister_with(&path)
-                .metakey(Self::metakey())
+                .metakey(self.list_metakey.clone())
                 .recursive(true)
                 .await
                 .map_err(|err| format_object_store_error(err, &path))?;
@@ -336,7 +339,7 @@ impl ObjectStore for OpendalStore {
                 self.inner
                     .lister_with(&path)
                     .start_after(offset.as_ref())
-                    .metakey(Self::metakey())
+                    .metakey(self.list_metakey.clone())
                     .recursive(true)
                     .into_future()
                     .into_send()
@@ -348,7 +351,7 @@ impl ObjectStore for OpendalStore {
             } else {
                 self.inner
                     .lister_with(&path)
-                    .metakey(Self::metakey())
+                    .metakey(self.list_metakey.clone())
                     .recursive(true)
                     .into_future()
                     .into_send()
@@ -370,7 +373,7 @@ impl ObjectStore for OpendalStore {
         let mut stream = self
             .inner
             .lister_with(&path)
-            .metakey(Self::metakey())
+            .metakey(self.list_metakey.clone())
             .into_future()
             .into_send()
             .await
