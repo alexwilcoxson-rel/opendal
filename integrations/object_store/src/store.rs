@@ -90,6 +90,7 @@ use tokio::sync::{Mutex, Notify};
 ///     assert_eq!(content, bytes);
 /// }
 /// ```
+#[derive(Clone)]
 pub struct OpendalStore {
     info: Arc<OperatorInfo>,
     inner: Operator,
@@ -203,7 +204,7 @@ impl ObjectStore for OpendalStore {
         let meta = ObjectMeta {
             location: location.clone(),
             last_modified: meta.last_modified().unwrap_or_default(),
-            size: meta.content_length() as usize,
+            size: meta.content_length(),
             e_tag: meta.etag().map(|x| x.to_string()),
             version: meta.version().map(|x| x.to_string()),
         };
@@ -249,11 +250,11 @@ impl ObjectStore for OpendalStore {
         })
     }
 
-    async fn get_range(&self, location: &Path, range: Range<usize>) -> object_store::Result<Bytes> {
+    async fn get_range(&self, location: &Path, range: Range<u64>) -> object_store::Result<Bytes> {
         let bs = self
             .inner
             .read_with(location.as_ref())
-            .range(range.start as u64..range.end as u64)
+            .range(range.start..range.end)
             .into_future()
             .into_send()
             .await
@@ -273,7 +274,7 @@ impl ObjectStore for OpendalStore {
         Ok(ObjectMeta {
             location: location.clone(),
             last_modified: meta.last_modified().unwrap_or_default(),
-            size: meta.content_length() as usize,
+            size: meta.content_length(),
             e_tag: meta.etag().map(|x| x.to_string()),
             version: meta.version().map(|x| x.to_string()),
         })
@@ -289,16 +290,14 @@ impl ObjectStore for OpendalStore {
         Ok(())
     }
 
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'_, object_store::Result<ObjectMeta>> {
+    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
         // object_store `Path` always removes trailing slash
         // need to add it back
         let path = prefix.map_or("".into(), |x| format!("{}/", x));
 
+        let lister_fut = self.inner.lister_with(&path).recursive(true);
         let fut = async move {
-            let stream = self
-                .inner
-                .lister_with(&path)
-                .recursive(true)
+            let stream = lister_fut
                 .await
                 .map_err(|err| format_object_store_error(err, &path))?;
 
@@ -318,13 +317,17 @@ impl ObjectStore for OpendalStore {
         &self,
         prefix: Option<&Path>,
         offset: &Path,
-    ) -> BoxStream<'_, object_store::Result<ObjectMeta>> {
+    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
         let path = prefix.map_or("".into(), |x| format!("{}/", x));
         let offset = offset.clone();
 
+        // clone self for 'static lifetime
+        // clone self is cheap
+        let this = self.clone();
+
         let fut = async move {
-            let fut = if self.inner.info().full_capability().list_with_start_after {
-                self.inner
+            let fut = if this.inner.info().full_capability().list_with_start_after {
+                this.inner
                     .lister_with(&path)
                     .start_after(offset.as_ref())
                     .recursive(true)
@@ -336,7 +339,7 @@ impl ObjectStore for OpendalStore {
                     .into_send()
                     .boxed()
             } else {
-                self.inner
+                this.inner
                     .lister_with(&path)
                     .recursive(true)
                     .into_future()
@@ -583,7 +586,7 @@ mod tests {
 
         let meta = object_store.head(&path).await.unwrap();
 
-        assert_eq!(meta.size, all_bytes.len());
+        assert_eq!(meta.size, all_bytes.len() as u64);
 
         assert_eq!(
             object_store

@@ -36,7 +36,7 @@ bytes = "1"
 flagset = "0.4"
 futures = "0.3"
 futures-util = "0.3"
-object_store = "0.11"
+object_store = "0.12"
 opendal = { version = "0.51.0", path = "../../core" }
 pin-project = "1.1"
 send_wrapper = { version = "0.6", features = ["futures"], optional = true }
